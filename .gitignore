@@ -1,0 +1,43 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# Agentic related
+.claude
+.anthropic/
+.openai/
+.cursor/
+.windsurf/
+.continue/
+.copilot/
+.agent/
+.agents/
+.openinterpreter/
+agent_workspace/
+workspace/
+*prompt_history*
+*agent_log*
+*session_cache*
+.mem0/
+chroma_db/
+.chroma/
+vector_store/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Executables & Binaries
+*HTTPServerDB*.exe
