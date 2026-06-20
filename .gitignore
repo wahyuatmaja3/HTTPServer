@@ -41,3 +41,5 @@ app.*.map.json
 
 # Executables & Binaries
 *HTTPServerDB*.exe
+
+tables/
