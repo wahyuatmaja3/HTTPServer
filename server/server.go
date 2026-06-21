@@ -92,23 +92,17 @@ func (s *Server) Start() error {
 
 	mux := http.NewServeMux()
 
-	// Register all endpoints
+	// Register every endpoint under its lowercase path. Incoming requests are
+	// lowercased by the wrapper below, so routing is case-insensitive.
 	for _, ep := range s.endpoints {
 		ep := ep // capture
 		path := ep.Command
 		if !strings.HasPrefix(path, "/") {
 			path = "/" + path
 		}
-		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc(strings.ToLower(path), func(w http.ResponseWriter, r *http.Request) {
 			s.handleEndpoint(w, r, ep)
 		})
-		// Also register lowercase version
-		lowerPath := strings.ToLower(path)
-		if lowerPath != path {
-			mux.HandleFunc(lowerPath, func(w http.ResponseWriter, r *http.Request) {
-				s.handleEndpoint(w, r, ep)
-			})
-		}
 	}
 
 	// Default handler for unregistered paths
@@ -121,10 +115,17 @@ func (s *Server) Start() error {
 		})
 	})
 
+	// Make routing case-insensitive: lowercase the request path before it
+	// reaches the mux, so /API/Foo, /api/foo and /API/FOO all match.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = strings.ToLower(r.URL.Path)
+		mux.ServeHTTP(w, r)
+	})
+
 	addr := fmt.Sprintf(":%s", s.config.Port)
 	s.server = &http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  time.Duration(s.config.SessionTimeout) * time.Millisecond,
 		WriteTimeout: time.Duration(s.config.SessionTimeout) * time.Millisecond,
 	}
