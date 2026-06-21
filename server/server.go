@@ -180,6 +180,18 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, ep APIEn
 
 	s.log(fmt.Sprintf("[%s] %s %s params=%v", time.Now().Format("15:04:05"), r.Method, r.URL.Path, params))
 
+	// Static endpoints store a ready-made JSON response in the SQL field
+	// instead of a query (e.g. /API/GETPESANSTATIK). Return it verbatim.
+	if trimmed := strings.TrimSpace(ep.SQL); strings.HasPrefix(trimmed, "{") {
+		var static map[string]interface{}
+		if err := json.Unmarshal([]byte(trimmed), &static); err == nil {
+			s.log(fmt.Sprintf("  Static response in %v", time.Since(start)))
+			writeJSON(w, http.StatusOK, static)
+			return
+		}
+		s.log("  Static SQL field is not valid JSON, falling through to query execution")
+	}
+
 	// Execute SQL query
 	result, err := ExecuteQuery(s.config.TablesDir, ep.SQL, params)
 	if err != nil {

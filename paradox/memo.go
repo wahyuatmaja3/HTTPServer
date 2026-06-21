@@ -56,16 +56,16 @@ func ReadMemoData(dbPath string, mp *MemoPointer) (string, error) {
 	}
 
 	blockType := blockData[0]
+	_ = subIndex
 
 	if blockType == 3 {
-		// Type 3: sub-allocated block
-		// Entry number = 0x40 - sub_index (1-based)
-		entryNum := 0x40 - subIndex
-
-		// Pointer table at block offset 0x100, 5-byte entries
-		// Entry format: [mod(1)] [offset_div16(1)] [size_chunks(1)] [entry_number(1)] [reserved(1)]
+		// Type 3: sub-allocated block holding many small memos.
+		// The pointer table starts at block offset 0x100 with 5-byte entries:
+		//   [mod(1)] [offset_div16(1)] [size_chunks(1)] [entry_index(1)] [reserved(1)]
+		// We match on entry_index, which is carried in the memo pointer itself.
+		entryIndex := int(mp.EntryIndex)
 		ptBase := 0x100
-		maxEntries := (0x150 - ptBase) / 5 // pointer table fits between 0x100 and 0x150
+		maxEntries := (0x1000 - ptBase) / 5
 
 		dataOffInBlock := -1
 		for i := 0; i < maxEntries; i++ {
@@ -74,10 +74,7 @@ func ReadMemoData(dbPath string, mp *MemoPointer) (string, error) {
 				break
 			}
 			eNum := int(blockData[eOff+3])
-			if eNum == 0 && blockData[eOff+1] == 0 {
-				break // end of table
-			}
-			if eNum == entryNum {
+			if eNum == entryIndex {
 				dataOffInBlock = int(blockData[eOff+1]) * 16
 				break
 			}

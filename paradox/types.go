@@ -122,11 +122,10 @@ func ParseFieldValue(data []byte, field FieldInfo) interface{} {
 
 // MemoPointer holds info to look up memo data in .MB file
 type MemoPointer struct {
-	BlockIndex  uint32
-	DataOffset  uint8
-	DataLength  uint16
-	InlineData  []byte
-	ModCount    uint16
+	BlockIndex uint32
+	EntryIndex uint16
+	DataLength uint32
+	InlineData []byte
 }
 
 func parseMemoPointer(raw []byte, size int) *MemoPointer {
@@ -162,18 +161,20 @@ func parseMemoPointer(raw []byte, size int) *MemoPointer {
 	// Last 10 bytes are: [hdrOffset(4)][dataLength(4)][modCount(2)]
 	// Where hdrOffset is the offset into the .MB file
 
-	// Let me use a simpler approach matching what I see in the data:
+	// The 10-byte memo pointer sits at the end of the field. Layout:
+	//   [0:4] block index in the .MB file (LE uint32)
+	//   [4:8] length of the memo data (LE uint32)
+	//   [8:10] entry index within a type-3 (sub-allocated) block (LE uint16)
+	// Any bytes before the pointer are inline data (used only as a fallback).
 	mp := &MemoPointer{}
 
-	// Block index at offset size-10, 4 bytes LE
 	idx := size - 10
 	if idx < 0 {
 		idx = 0
 	}
 	mp.BlockIndex = binary.LittleEndian.Uint32(raw[idx : idx+4])
-	mp.DataLength = binary.LittleEndian.Uint16(raw[idx+4 : idx+6])
-	mp.ModCount = binary.LittleEndian.Uint16(raw[idx+6 : idx+8])
-	mp.DataOffset = raw[idx+8]
+	mp.DataLength = binary.LittleEndian.Uint32(raw[idx+4 : idx+8])
+	mp.EntryIndex = binary.LittleEndian.Uint16(raw[idx+8 : idx+10])
 
 	// If there's inline data before the pointer
 	if idx > 0 {
