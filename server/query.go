@@ -78,7 +78,7 @@ func executeSelect(tablesDir string, sql string, params map[string]string) (*Que
 		return nil, fmt.Errorf("table not found: %s: %w", parsed.TableName, err)
 	}
 
-	table, err := paradox.ReadTable(tablePath)
+	table, err := paradox.OpenTable(tablePath)
 	if err != nil {
 		return nil, fmt.Errorf("read table %s: %w", parsed.TableName, err)
 	}
