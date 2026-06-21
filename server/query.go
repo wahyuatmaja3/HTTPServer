@@ -91,18 +91,19 @@ func executeSelect(tablesDir string, sql string, params map[string]string) (*Que
 		}
 	}
 
-	// Project columns
-	result := &QueryResult{
-		Columns: parsed.Columns,
+	// Determine the ordered output keys, preserving the exact name/casing
+	// each column has in the SQL (or its alias). Response key order follows
+	// SQL column order.
+	cols := parsed.Columns
+	if parsed.IsSelectAll {
+		cols = table.GetFieldNames()
 	}
 
-	if parsed.IsSelectAll {
-		result.Columns = table.GetFieldNames()
-	}
+	result := &QueryResult{Columns: outputKeys(cols)}
 
 	for _, rec := range filtered {
 		projected := make(paradox.Record)
-		for _, col := range result.Columns {
+		for _, col := range cols {
 			// Handle aliased columns like "k.Kode"
 			fieldName := col
 			if idx := strings.Index(col, "."); idx >= 0 {
@@ -116,16 +117,14 @@ func executeSelect(tablesDir string, sql string, params map[string]string) (*Que
 					fieldName = fieldName[idx+1:]
 				}
 				alias := parts[len(parts)-1]
-				val := getFieldValue(rec, fieldName)
-				projected[alias] = val
+				projected[alias] = getFieldValue(rec, fieldName)
 			} else {
-				val := getFieldValue(rec, fieldName)
-				projected[fieldName] = val
+				projected[fieldName] = getFieldValue(rec, fieldName)
 			}
 		}
 
 		// Handle :param AS alias expressions
-		for _, col := range result.Columns {
+		for _, col := range cols {
 			upperCol := strings.ToUpper(col)
 			if strings.Contains(upperCol, " AS ") {
 				parts := strings.SplitN(col, " as ", 2)
@@ -149,6 +148,28 @@ func executeSelect(tablesDir string, sql string, params map[string]string) (*Que
 	}
 
 	return result, nil
+}
+
+// outputKeys maps SQL column expressions to the response key for each,
+// preserving order and original casing.
+func outputKeys(cols []string) []string {
+	keys := make([]string, 0, len(cols))
+	for _, col := range cols {
+		if idx := findKeyword(strings.ToUpper(col), "AS"); idx >= 0 {
+			keys = append(keys, strings.TrimSpace(col[idx+2:]))
+			continue
+		}
+		parts := strings.Fields(col)
+		key := parts[0]
+		if len(parts) >= 2 {
+			key = parts[len(parts)-1] // column alias: "LockGPS kLockgps"
+		}
+		if dot := strings.LastIndex(key, "."); dot >= 0 {
+			key = key[dot+1:]
+		}
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func executeInsert(tablesDir string, sql string, params map[string]string) (*QueryResult, error) {

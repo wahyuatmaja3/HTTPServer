@@ -108,11 +108,7 @@ func (s *Server) Start() error {
 	// Default handler for unregistered paths
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		s.log(fmt.Sprintf("[%s] %s %s - 404", time.Now().Format("15:04:05"), r.Method, r.URL.Path))
-		writeJSON(w, http.StatusNotFound, map[string]interface{}{
-			"status":     "Error",
-			"statusCode": "404",
-			"data":       map[string]interface{}{"message": "Endpoint not found"},
-		})
+		writeError(w, http.StatusNotFound, "404", "Endpoint not found")
 	})
 
 	// Make routing case-insensitive: lowercase the request path before it
@@ -182,12 +178,14 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, ep APIEn
 	s.log(fmt.Sprintf("[%s] %s %s params=%v", time.Now().Format("15:04:05"), r.Method, r.URL.Path, params))
 
 	// Static endpoints store a ready-made JSON response in the SQL field
-	// instead of a query (e.g. /API/GETPESANSTATIK). Return it verbatim.
+	// instead of a query (e.g. /API/GETPESANSTATIK). Return it verbatim,
+	// preserving the author's exact key order and formatting.
 	if trimmed := strings.TrimSpace(ep.SQL); strings.HasPrefix(trimmed, "{") {
-		var static map[string]interface{}
-		if err := json.Unmarshal([]byte(trimmed), &static); err == nil {
+		if json.Valid([]byte(trimmed)) {
 			s.log(fmt.Sprintf("  Static response in %v", time.Since(start)))
-			writeJSON(w, http.StatusOK, static)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(trimmed))
 			return
 		}
 		s.log("  Static SQL field is not valid JSON, falling through to query execution")
@@ -197,51 +195,84 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, ep APIEn
 	result, err := ExecuteQuery(s.config.TablesDir, ep.SQL, params)
 	if err != nil {
 		s.log(fmt.Sprintf("  Error: %v", err))
-		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
-			"status":     "Error",
-			"statusCode": "500",
-			"data":       map[string]interface{}{"message": err.Error()},
-		})
+		writeError(w, http.StatusInternalServerError, "500", err.Error())
 		return
 	}
 
-	// Format response like hasil.txt
-	records := make([]map[string]interface{}, 0, len(result.Records))
-	for _, rec := range result.Records {
-		row := make(map[string]interface{})
-		for k, v := range rec {
-			// Use lowercase keys in response
-			key := strings.ToLower(k)
-			if v == nil {
-				row[key] = ""
-			} else {
-				row[key] = v
-			}
-		}
-		records = append(records, row)
-	}
-
-	response := map[string]interface{}{
-		"status":     "Success",
-		"statusCode": "200",
-		"data": map[string]interface{}{
-			"result": records,
-		},
-	}
-
 	elapsed := time.Since(start)
-	s.log(fmt.Sprintf("  Response: %d records in %v", len(records), elapsed))
+	s.log(fmt.Sprintf("  Response: %d records in %v", len(result.Records), elapsed))
 
-	writeJSON(w, http.StatusOK, response)
+	writeResult(w, "Success", "200", result.Columns, result.Records)
 }
 
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+// writeResult emits the response in the exact shape produced by the original
+// server (see hasil.txt): fixed top-level key order (status, statusCode, data),
+// column order and casing preserved from the SQL, and every value as a string.
+func writeResult(w http.ResponseWriter, status, statusCode string, columns []string, records []paradox.Record) {
+	var sb strings.Builder
+	sb.WriteString(`{ "status" : `)
+	sb.Write(jsonString(status))
+	sb.WriteString(`, "statusCode" : `)
+	sb.Write(jsonString(statusCode))
+	sb.WriteString(`, "data" : { "result" : [`)
+	for i, rec := range records {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString("{ ")
+		for j, key := range columns {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			sb.Write(jsonString(key))
+			sb.WriteString(" : ")
+			sb.Write(jsonString(valueToString(rec[key])))
+		}
+		sb.WriteString(" }")
+	}
+	sb.WriteString("] } }")
+
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	enc := json.NewEncoder(w)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(sb.String()))
+}
+
+// writeError emits an error response matching the original server's shape:
+// { "status" : "Error", "statusCode" : "<code>", "data" : { "message" : "<msg>" } }
+func writeError(w http.ResponseWriter, httpStatus int, statusCode, message string) {
+	var sb strings.Builder
+	sb.WriteString(`{ "status" : "Error", "statusCode" : `)
+	sb.Write(jsonString(statusCode))
+	sb.WriteString(`, "data" : { "message" : `)
+	sb.Write(jsonString(message))
+	sb.WriteString(` } }`)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(httpStatus)
+	w.Write([]byte(sb.String()))
+}
+
+func jsonString(s string) []byte {
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(data); err != nil {
-		log.Printf("JSON encode error: %v", err)
+	enc.Encode(s)
+	return []byte(strings.TrimRight(buf.String(), "\n"))
+}
+
+func valueToString(v interface{}) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case bool:
+		if x {
+			return "True"
+		}
+		return "False"
+	case string:
+		return x
+	default:
+		return fmt.Sprintf("%v", x)
 	}
 }
 
