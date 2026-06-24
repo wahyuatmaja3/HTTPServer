@@ -32,6 +32,7 @@ var (
 	pUpdateWindow           = user32.NewProc("UpdateWindow")
 	pShowWindow             = user32.NewProc("ShowWindow")
 	pEnableWindow           = user32.NewProc("EnableWindow")
+	pMoveWindow             = user32.NewProc("MoveWindow")
 
 	pAdjustWindowRectEx = user32.NewProc("AdjustWindowRectEx")
 	pCreateFontW        = gdi32.NewProc("CreateFontW")
@@ -66,6 +67,7 @@ const (
 	WM_USER        = 0x0400
 	WM_APP         = 0x8000
 	WM_CTLCOLORSTATIC = 0x0138
+	WM_SIZE        = 0x0005
 )
 
 // Window styles
@@ -83,7 +85,9 @@ const (
 	WS_CLIPCHILDREN = 0x02000000
 	WS_CLIPSIBLINGS = 0x04000000
 
-	WS_OVERLAPPEDWINDOW = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+	WS_THICKFRAME   = 0x00040000
+	WS_MAXIMIZEBOX  = 0x00010000
+	WS_OVERLAPPEDWINDOW = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
 
 	WS_EX_CLIENTEDGE  = 0x00000200
 	WS_EX_CONTROLPARENT = 0x00010000
@@ -108,6 +112,28 @@ const (
 	LBS_NOTIFY       = 0x0001
 	LBS_HASSTRINGS   = 0x0040
 	LBS_NOINTEGRALHEIGHT = 0x0100
+
+	// ListView styles & messages
+	LVS_REPORT          = 0x0001
+	LVS_SINGLESEL       = 0x0004
+	LVS_NOCOLUMNHEADER  = 0x4000
+
+	LVM_FIRST           = 0x1000
+	LVM_GETITEMCOUNT    = LVM_FIRST + 4
+	LVM_GETITEMSTATE    = LVM_FIRST + 44
+	LVM_SETITEMSTATE    = LVM_FIRST + 43
+	LVM_SETEXTENDEDLISTVIEWSTYLE = LVM_FIRST + 54
+	LVM_INSERTITEMW     = LVM_FIRST + 77
+	LVM_INSERTCOLUMNW   = LVM_FIRST + 97
+
+	LVS_EX_CHECKBOXES      = 0x00000004
+	LVS_EX_FULLROWSELECT   = 0x00000020
+
+	LVIF_TEXT              = 0x0001
+	LVIF_STATE             = 0x0008
+	LVIS_STATEIMAGEMASK    = 0xF000
+
+	LVCF_WIDTH             = 0x0002
 )
 
 // ShowWindow
@@ -318,15 +344,17 @@ func updateWindow(hwnd syscall.Handle) {
 func initCommonControls() {
 	icc := initCommonControlsExStruct{
 		dwSize: uint32(unsafe.Sizeof(initCommonControlsExStruct{})),
-		dwICC:  ICC_TAB_CLASSES | ICC_STANDARD_CLASSES,
+		dwICC:  ICC_TAB_CLASSES | ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES,
 	}
 	pInitCommonControlsEx.Call(uintptr(unsafe.Pointer(&icc)))
 }
 
+const ICC_LISTVIEW_CLASSES = 0x00000001
+
 func createTahomaFont() syscall.Handle {
-	// Tahoma. Height -12 ≈ 9pt at 96 DPI.
+	// Tahoma. Height -11 ≈ 8.2pt at 96 DPI.
 	h, _, _ := pCreateFontW.Call(
-		uintptr(uint32(0xFFFFFFF4)), // height = -12 (int32) reinterpreted
+		uintptr(uint32(0xFFFFFFF5)), // height = -11 (int32) reinterpreted
 		0,                   // width
 		0,                   // escapement
 		0,                   // orientation
@@ -404,4 +432,47 @@ func enableWindow(hwnd syscall.Handle, enable bool) bool {
 	}
 	r, _, _ := pEnableWindow.Call(uintptr(hwnd), val)
 	return r != 0
+}
+
+func moveWindow(hwnd syscall.Handle, x, y, w, h int32, repaint bool) bool {
+	var val uintptr
+	if repaint {
+		val = 1
+	}
+	r, _, _ := pMoveWindow.Call(uintptr(hwnd), uintptr(x), uintptr(y), uintptr(w), uintptr(h), val)
+	return r != 0
+}
+
+func hiWord(v uintptr) uint16 { return uint16((v >> 16) & 0xffff) }
+
+type lvColumnW struct {
+	mask       uint32
+	fmt        int32
+	cx         int32
+	pszText    *uint16
+	cchTextMax int32
+	iSubItem   int32
+	iImage     int32
+	iOrder     int32
+	iCxMin     int32
+	iDefaultRatio int32
+	iCxIdeal   int32
+}
+
+type lvItemW struct {
+	mask       uint32
+	iItem      int32
+	iSubItem   int32
+	state      uint32
+	stateMask  uint32
+	pszText    *uint16
+	cchTextMax int32
+	iImage     int32
+	lParam     uintptr
+	iIndent    int32
+	iGroupId   int32
+	cColumns   uint32
+	puColumns  *uint32
+	piColFmt   *int32
+	iGroup     int32
 }

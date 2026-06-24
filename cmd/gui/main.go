@@ -70,6 +70,7 @@ type appGUI struct {
 	hMaxTime   syscall.Handle
 	hLog       syscall.Handle
 	hStartBtn  syscall.Handle
+	hEtched    syscall.Handle
 	controls   []syscall.Handle // every child control, for font application
 
 	config   iniConfig
@@ -165,9 +166,38 @@ func (g *appGUI) buildControls() {
 
 	// §3.1 Bind to IPs (left sector)
 	g.child("STATIC", "Bind to IPs", SS_LEFT, 0, ox+7, oy+11, 75, 11, 0)
-	g.hIPList = g.child("LISTBOX", "",
-		LBS_NOTIFY|LBS_HASSTRINGS|LBS_NOINTEGRALHEIGHT|WS_VSCROLL|WS_BORDER|WS_TABSTOP,
+	g.hIPList = g.child("SysListView32", "",
+		WS_BORDER|LVS_REPORT|LVS_NOCOLUMNHEADER|LVS_SINGLESEL|WS_TABSTOP,
 		WS_EX_CLIENTEDGE, ox+7, oy+24, 98, 75, idIPList)
+
+	// Set extended styles: checkboxes and full row select (wParam must match lParam)
+	sendMessage(g.hIPList, LVM_SETEXTENDEDLISTVIEWSTYLE,
+		LVS_EX_CHECKBOXES|LVS_EX_FULLROWSELECT,
+		LVS_EX_CHECKBOXES|LVS_EX_FULLROWSELECT)
+
+	// Add a single column
+	col := lvColumnW{
+		mask: LVCF_WIDTH,
+		cx:   94,
+	}
+	sendMessage(g.hIPList, LVM_INSERTCOLUMNW, 0, uintptr(unsafe.Pointer(&col)))
+
+	// Populate ListView
+	for i, ip := range g.config.IPs {
+		stateVal := uint32(0x1000) // Unchecked (1 << 12)
+		if i == 0 {
+			stateVal = 0x2000 // Checked (2 << 12)
+		}
+		item := lvItemW{
+			mask:      LVIF_TEXT | LVIF_STATE,
+			iItem:     int32(i),
+			iSubItem:  0,
+			pszText:   mustUTF16(ip),
+			stateMask: LVIS_STATEIMAGEMASK,
+			state:     stateVal,
+		}
+		sendMessage(g.hIPList, LVM_INSERTITEMW, 0, uintptr(unsafe.Pointer(&item)))
+	}
 
 	g.child("STATIC", "Bind to port", SS_LEFT, 0, ox+112, oy+11, 60, 11, 0)
 	g.hPort = g.child("EDIT", g.config.Port, ES_LEFT|ES_AUTOHSCROLL|WS_TABSTOP,
@@ -205,7 +235,7 @@ func (g *appGUI) buildControls() {
 	g.hMaxTime = g.child("EDIT", "", roStyle, WS_EX_CLIENTEDGE, ox+412, oy+74, 52, 17, 0)
 
 	// §4 Etched separator at outer Y=142, and the log window.
-	g.child("STATIC", "", SS_ETCHEDHORZ, 0, 7, 142, 472, 2, 0)
+	g.hEtched = g.child("STATIC", "", SS_ETCHEDHORZ, 0, 7, 142, 472, 2, 0)
 	g.hLog = g.child(g.logClass, "",
 		ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_VSCROLL|WS_BORDER,
 		WS_EX_CLIENTEDGE, 7, 146, 472, 172, 0)
@@ -352,9 +382,22 @@ func (g *appGUI) startServer() {
 		port = "8024"
 	}
 
+	var checkedIPs []string
+	count := sendMessage(g.hIPList, LVM_GETITEMCOUNT, 0, 0)
+	for i := 0; i < int(count); i++ {
+		state := sendMessage(g.hIPList, LVM_GETITEMSTATE, uintptr(i), LVIS_STATEIMAGEMASK)
+		isChecked := (state & 0x2000) != 0
+		if isChecked && i < len(g.config.IPs) {
+			checkedIPs = append(checkedIPs, g.config.IPs[i])
+		}
+	}
+	if len(checkedIPs) == 0 {
+		checkedIPs = g.config.IPs
+	}
+
 	cfg := server.Config{
 		Port:           port,
-		IPs:            g.config.IPs,
+		IPs:            checkedIPs,
 		MaxConnections: g.editInt(g.hMaxConn, 100),
 		SessionTimeout: g.editInt(g.hSessionTO, 8000),
 		MaxThreads:     g.editInt(g.hMaxThread, 2000),
@@ -484,6 +527,18 @@ func wndProc(hwnd syscall.Handle, m uint32, wParam, lParam uintptr) uintptr {
 	switch m {
 	case wmAppendLog:
 		app.drainPendingLogs()
+		return 0
+	case WM_SIZE:
+		w := int32(loWord(lParam))
+		h := int32(hiWord(lParam))
+		if w > 0 && h > 0 {
+			// Settings tab stays fixed at top: do NOT resize hTab.
+			// Only stretch the separator, log, and button.
+			moveWindow(app.hEtched, 7, 142, w-14, 2, true)
+			moveWindow(app.hLog, 7, 146, w-14, h-184, true)
+			// Keep button anchored to bottom-right
+			moveWindow(app.hStartBtn, w-89, h-28, 82, 21, true)
+		}
 		return 0
 	case WM_COMMAND:
 		id := loWord(wParam)
