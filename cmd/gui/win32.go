@@ -33,6 +33,8 @@ var (
 	pShowWindow             = user32.NewProc("ShowWindow")
 	pEnableWindow           = user32.NewProc("EnableWindow")
 	pMoveWindow             = user32.NewProc("MoveWindow")
+	pSetTimer               = user32.NewProc("SetTimer")
+	pKillTimer              = user32.NewProc("KillTimer")
 
 	pAdjustWindowRectEx = user32.NewProc("AdjustWindowRectEx")
 	pCreateFontW        = gdi32.NewProc("CreateFontW")
@@ -68,6 +70,7 @@ const (
 	WM_APP         = 0x8000
 	WM_CTLCOLORSTATIC = 0x0138
 	WM_SIZE        = 0x0005
+	WM_TIMER       = 0x0113
 )
 
 // Window styles
@@ -475,4 +478,14 @@ type lvItemW struct {
 	puColumns  *uint32
 	piColFmt   *int32
 	iGroup     int32
+}
+
+func setTimer(hwnd syscall.Handle, id uintptr, elapse uint32, timerFunc uintptr) uintptr {
+	r, _, _ := pSetTimer.Call(uintptr(hwnd), id, uintptr(elapse), timerFunc)
+	return r
+}
+
+func killTimer(hwnd syscall.Handle, id uintptr) bool {
+	r, _, _ := pKillTimer.Call(uintptr(hwnd), id)
+	return r != 0
 }

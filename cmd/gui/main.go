@@ -34,6 +34,10 @@ const (
 // the UI thread.
 const wmAppendLog = WM_APP + 1
 
+// wmServerStarted is posted from the background start goroutine once the server
+// is listening (or has failed). wParam==1 means success, 0 means failure.
+const wmServerStarted = WM_APP + 2
+
 type iniConfig struct {
 	Port           string
 	IPs            []string
@@ -77,6 +81,7 @@ type appGUI struct {
 	srv      *server.Server
 	mu       sync.Mutex
 	running  bool
+	starting bool // true while background start goroutine is in progress
 	logClass string
 
 	// pending log lines delivered cross-thread
@@ -135,6 +140,9 @@ func main() {
 	showWindow(app.hwnd, SW_SHOWNORMAL)
 	updateWindow(app.hwnd)
 
+	// Set a 1-second timer to automatically start the server
+	setTimer(app.hwnd, 1, 1000, 0)
+
 	runMessageLoop()
 }
 
@@ -185,7 +193,7 @@ func (g *appGUI) buildControls() {
 	// Populate ListView
 	for i, ip := range g.config.IPs {
 		stateVal := uint32(0x1000) // Unchecked (1 << 12)
-		if i == 0 {
+		if i < 3 {
 			stateVal = 0x2000 // Checked (2 << 12)
 		}
 		item := lvItemW{
@@ -372,11 +380,13 @@ func (g *appGUI) editInt(h syscall.Handle, def int) int {
 
 func (g *appGUI) startServer() {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.running {
+	if g.running || g.starting {
+		g.mu.Unlock()
 		return
 	}
 
+	// Collect all UI values here on the UI thread (SendMessage calls must be
+	// on the thread that created the controls).
 	port := strings.TrimSpace(getWindowText(g.hPort))
 	if port == "" {
 		port = "8024"
@@ -405,18 +415,41 @@ func (g *appGUI) startServer() {
 		TablesDir:      server.GetTablesDir(),
 	}
 
-	g.srv = server.NewServer(cfg, g.logFromServer)
-	g.srv.SetColorLog(g.logColorFromServer)
-	if err := g.srv.Start(); err != nil {
-		g.appendLog(fmt.Sprintf("Error starting server: %v", err))
-		return
-	}
-	g.running = true
-	setWindowText(g.hStartBtn, "Stop Server")
+	// Disable start button while starting to give user feedback
+	g.starting = true
+	setWindowText(g.hStartBtn, "Starting...")
+	enableWindow(g.hStartBtn, false)
+	g.mu.Unlock()
 
-	enableWindow(g.hIPList, false)
-	enableWindow(g.hPort, false)
-	g.updateMetrics()
+	// Run blocking start (reads API.DB from disk) in a goroutine so the UI
+	// message loop stays responsive.
+	srv := server.NewServer(cfg, g.logFromServer)
+	srv.SetColorLog(g.logColorFromServer)
+	hwnd := g.hwnd
+	go func() {
+		err := srv.Start()
+		g.mu.Lock()
+		if err == nil {
+			g.srv = srv
+			g.running = true
+		} else {
+			g.logMu.Lock()
+			g.logPend = append(g.logPend, logLine{
+				text:  time.Now().Format("01/02/2006 15.04.05") + " Error starting server: " + err.Error(),
+				color: server.ColorBlack,
+			})
+			g.logMu.Unlock()
+		}
+		g.starting = false
+		g.mu.Unlock()
+
+		// Notify UI thread to finish setup (or revert button) safely.
+		successVal := uintptr(0)
+		if err == nil {
+			successVal = 1
+		}
+		pPostMessageW.Call(uintptr(hwnd), wmServerStarted, successVal, 0)
+	}()
 }
 
 func (g *appGUI) stopServer() {
@@ -439,7 +472,11 @@ func (g *appGUI) stopServer() {
 func (g *appGUI) toggleServer() {
 	g.mu.Lock()
 	running := g.running
+	starting := g.starting
 	g.mu.Unlock()
+	if starting {
+		return // ignore clicks while background start is in progress
+	}
 	if running {
 		g.stopServer()
 	} else {
@@ -525,6 +562,28 @@ func (g *appGUI) saveINI() {
 
 func wndProc(hwnd syscall.Handle, m uint32, wParam, lParam uintptr) uintptr {
 	switch m {
+	case WM_TIMER:
+		if wParam == 1 {
+			killTimer(hwnd, 1)
+			app.startServer()
+			return 0
+		}
+	case wmServerStarted:
+		// Called back from the background start goroutine via PostMessage.
+		if wParam == 1 {
+			// Success: lock down IP/port controls, show Stop button.
+			setWindowText(app.hStartBtn, "Stop Server")
+			enableWindow(app.hStartBtn, true)
+			enableWindow(app.hIPList, false)
+			enableWindow(app.hPort, false)
+			app.updateMetrics()
+		} else {
+			// Failure: restore Start button so the user can retry.
+			setWindowText(app.hStartBtn, "Start Server")
+			enableWindow(app.hStartBtn, true)
+		}
+		app.drainPendingLogs()
+		return 0
 	case wmAppendLog:
 		app.drainPendingLogs()
 		return 0
