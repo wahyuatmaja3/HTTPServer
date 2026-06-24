@@ -32,13 +32,39 @@ type Config struct {
 	TablesDir      string
 }
 
+// LogColor categorizes a log line so a GUI can render it in a matching color.
+// Headless callers (plain logFunc) can ignore it.
+type LogColor int
+
+const (
+	ColorBlack LogColor = iota
+	ColorBlue
+	ColorMagenta
+	ColorGreen
+)
+
+// Metrics is a snapshot of live request counters shown in the GUI.
+type Metrics struct {
+	TotalReq    int64
+	OnProses    int64
+	MaxOnProses int64
+	MaxTime     time.Duration
+}
+
 // Server is the HTTP server
 type Server struct {
-	config    Config
-	endpoints []APIEndpoint
-	server    *http.Server
-	mu        sync.Mutex
-	logFunc   func(string)
+	config       Config
+	endpoints    []APIEndpoint
+	server       *http.Server
+	mu           sync.Mutex
+	logFunc      func(string)
+	colorLogFunc func(string, LogColor)
+
+	metricsMu   sync.Mutex
+	totalReq    int64
+	onProses    int64
+	maxOnProses int64
+	maxTime     time.Duration
 }
 
 // NewServer creates a new server instance
@@ -46,6 +72,42 @@ func NewServer(config Config, logFunc func(string)) *Server {
 	return &Server{
 		config:  config,
 		logFunc: logFunc,
+	}
+}
+
+// SetColorLog registers a callback that receives per-request log lines with a
+// color category. When set, colored lines go here instead of the plain logFunc.
+func (s *Server) SetColorLog(fn func(string, LogColor)) {
+	s.colorLogFunc = fn
+}
+
+// Metrics returns a snapshot of the live request counters.
+func (s *Server) Metrics() Metrics {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	return Metrics{
+		TotalReq:    s.totalReq,
+		OnProses:    s.onProses,
+		MaxOnProses: s.maxOnProses,
+		MaxTime:     s.maxTime,
+	}
+}
+
+// FormatDuration renders a duration as mm.ss.mmm (matching the original
+// program's "00.00.100" style used in Finish log lines and the Max Time field).
+func FormatDuration(d time.Duration) string {
+	totalMs := d.Milliseconds()
+	ms := totalMs % 1000
+	sec := (totalMs / 1000) % 60
+	minu := totalMs / 60000
+	return fmt.Sprintf("%02d.%02d.%d", minu, sec, ms)
+}
+
+func (s *Server) logColor(msg string, c LogColor) {
+	if s.colorLogFunc != nil {
+		s.colorLogFunc(msg, c)
+	} else if s.logFunc != nil {
+		s.logFunc(msg)
 	}
 }
 
@@ -61,11 +123,6 @@ func (s *Server) LoadEndpoints() error {
 		return fmt.Errorf("read API.DB: %w", err)
 	}
 
-	s.log(fmt.Sprintf("Loaded API.DB: %d records, %d fields", len(table.Records), len(table.Header.Fields)))
-	for _, f := range table.Header.Fields {
-		s.log(fmt.Sprintf("  Field: %s (type=%d, size=%d)", f.Name, f.Type, f.Size))
-	}
-
 	s.endpoints = nil
 	for _, rec := range table.Records {
 		ep := APIEndpoint{
@@ -76,11 +133,9 @@ func (s *Server) LoadEndpoints() error {
 		}
 		if ep.Command != "" && ep.Command != "<nil>" {
 			s.endpoints = append(s.endpoints, ep)
-			s.log(fmt.Sprintf("  Endpoint: %s", ep.Command))
 		}
 	}
 
-	s.log(fmt.Sprintf("Discovered %d API endpoints", len(s.endpoints)))
 	return nil
 }
 
@@ -105,17 +160,41 @@ func (s *Server) Start() error {
 		})
 	}
 
-	// Default handler for unregistered paths
+	// Default handler for unregistered paths (e.g. /favicon.ico)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		s.log(fmt.Sprintf("[%s] %s %s - 404", time.Now().Format("15:04:05"), r.Method, r.URL.Path))
 		writeError(w, http.StatusNotFound, "404", "Endpoint not found")
 	})
 
-	// Make routing case-insensitive: lowercase the request path before it
-	// reaches the mux, so /API/Foo, /api/foo and /API/FOO all match.
+	// Every request is logged Req .. Finish and counted into the metrics, then
+	// routed case-insensitively (the path is lowercased before reaching the mux
+	// so /API/Foo, /api/foo and /API/FOO all match).
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origPath := r.URL.Path
+
+		s.metricsMu.Lock()
+		s.totalReq++
+		n := s.totalReq
+		s.onProses++
+		if s.onProses > s.maxOnProses {
+			s.maxOnProses = s.onProses
+		}
+		s.metricsMu.Unlock()
+
+		s.logColor(fmt.Sprintf("%07d Req %s,", n, origPath), ColorBlue)
+		start := time.Now()
+
 		r.URL.Path = strings.ToLower(r.URL.Path)
 		mux.ServeHTTP(w, r)
+
+		dur := time.Since(start)
+		s.metricsMu.Lock()
+		s.onProses--
+		if dur > s.maxTime {
+			s.maxTime = dur
+		}
+		s.metricsMu.Unlock()
+
+		s.logColor(fmt.Sprintf("%07d Finish %s %s ms", n, origPath, FormatDuration(dur)), ColorMagenta)
 	})
 
 	addr := fmt.Sprintf(":%s", s.config.Port)
@@ -126,14 +205,22 @@ func (s *Server) Start() error {
 		WriteTimeout: time.Duration(s.config.SessionTimeout) * time.Millisecond,
 	}
 
-	s.log(fmt.Sprintf("Starting server on port %s", s.config.Port))
+	// Startup banner (colored for the GUI, matching the original program).
+	s.logColor(fmt.Sprintf("MaxConnections  = %d", s.config.MaxConnections), ColorBlue)
+	s.logColor(fmt.Sprintf("ListenQueue = %d", s.config.ListenQueue), ColorBlue)
+	s.logColor(fmt.Sprintf("SessionTimeOut = %d", s.config.SessionTimeout), ColorBlue)
+	s.logColor(fmt.Sprintf("MaxThreads  = %d", s.config.MaxThreads), ColorBlue)
+	for _, ip := range s.config.IPs {
+		s.logColor(fmt.Sprintf("Server bound to IP %s on port %s", ip, s.config.Port), ColorBlack)
+	}
 
 	go func() {
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.log(fmt.Sprintf("Server error: %v", err))
+			s.logColor(fmt.Sprintf("Server error: %v", err), ColorBlack)
 		}
 	}()
 
+	s.logColor("Server started", ColorGreen)
 	return nil
 }
 
@@ -142,7 +229,7 @@ func (s *Server) Stop() error {
 	if s.server == nil {
 		return nil
 	}
-	s.log("Stopping server...")
+	//s.log("Stopping server...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)
@@ -151,22 +238,28 @@ func (s *Server) Stop() error {
 func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, ep APIEndpoint) {
 	start := time.Now()
 
-	// Collect parameters from query string and form
+	// Collect parameters from query string and body only when needed.
 	params := make(map[string]string)
-	r.ParseForm()
 	for k, v := range r.URL.Query() {
 		if len(v) > 0 {
 			params[k] = v[0]
 		}
 	}
-	for k, v := range r.PostForm {
-		if len(v) > 0 {
-			params[k] = v[0]
+
+	contentType := r.Header.Get("Content-Type")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") || strings.HasPrefix(contentType, "multipart/form-data") {
+			if err := r.ParseForm(); err == nil {
+				for k, v := range r.PostForm {
+					if len(v) > 0 {
+						params[k] = v[0]
+					}
+				}
+			}
 		}
 	}
 
-	// Also try JSON body
-	if r.Header.Get("Content-Type") == "application/json" && r.Body != nil {
+	if strings.HasPrefix(contentType, "application/json") && r.Body != nil {
 		var jsonParams map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&jsonParams); err == nil {
 			for k, v := range jsonParams {
@@ -174,15 +267,13 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, ep APIEn
 			}
 		}
 	}
-
-	s.log(fmt.Sprintf("[%s] %s %s params=%v", time.Now().Format("15:04:05"), r.Method, r.URL.Path, params))
+	parseDone := time.Now()
 
 	// Static endpoints store a ready-made JSON response in the SQL field
 	// instead of a query (e.g. /API/GETPESANSTATIK). Return it verbatim,
 	// preserving the author's exact key order and formatting.
 	if trimmed := strings.TrimSpace(ep.SQL); strings.HasPrefix(trimmed, "{") {
 		if json.Valid([]byte(trimmed)) {
-			s.log(fmt.Sprintf("  Static response in %v", time.Since(start)))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(trimmed))
@@ -193,16 +284,18 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, ep APIEn
 
 	// Execute SQL query
 	result, err := ExecuteQuery(s.config.TablesDir, ep.SQL, params)
+	queryDone := time.Now()
 	if err != nil {
 		s.log(fmt.Sprintf("  Error: %v", err))
 		writeError(w, http.StatusInternalServerError, "500", err.Error())
 		return
 	}
 
-	elapsed := time.Since(start)
-	s.log(fmt.Sprintf("  Response: %d records in %v", len(result.Records), elapsed))
-
 	writeResult(w, "Success", "200", result.Columns, result.Records)
+	writeDone := time.Now()
+	if total := writeDone.Sub(start); total >= 500*time.Millisecond {
+		s.log(fmt.Sprintf("SLOW %s parse=%v query=%v write=%v total=%v rows=%d", ep.Command, parseDone.Sub(start), queryDone.Sub(parseDone), writeDone.Sub(queryDone), total, len(result.Records)))
+	}
 }
 
 // writeResult emits the response in the exact shape produced by the original

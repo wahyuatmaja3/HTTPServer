@@ -51,7 +51,6 @@ type GUI struct {
 	running bool
 }
 
-// NewGUI creates and runs the GUI
 func NewGUI() {
 	g := &GUI{}
 	g.loadINI()
@@ -69,7 +68,15 @@ func NewGUI() {
 		g.saveINI()
 	})
 
+	g.seedLog()
 	g.window.ShowAndRun()
+}
+
+func (g *GUI) seedLog() {
+	now := time.Now().Format("01/02/2006 15.04.05")
+	g.appendLog(now + " FormCreate")
+	g.appendLog(now + " DB Open")
+	g.appendLog(now + " Version: 9 Maret 2024")
 }
 
 func (g *GUI) buildUI() {
@@ -224,7 +231,6 @@ func (g *GUI) startServer() {
 	g.running = true
 	g.startBtn.Disable()
 	g.stopBtn.Enable()
-	g.appendLog(fmt.Sprintf("Server started on port %s at %s", port, time.Now().Format("2006-01-02 15:04:05")))
 }
 
 func (g *GUI) stopServer() {
@@ -246,8 +252,8 @@ func (g *GUI) stopServer() {
 }
 
 func (g *GUI) appendLog(msg string) {
-	timestamp := time.Now().Format("15:04:05")
-	line := fmt.Sprintf("[%s] %s\n", timestamp, msg)
+	timestamp := time.Now().Format("01/02/2006 15.04.05")
+	line := timestamp + " " + msg + "\n"
 	current := g.logText.Text
 	g.logText.SetText(current + line)
 }
