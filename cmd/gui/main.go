@@ -87,6 +87,11 @@ type appGUI struct {
 	// pending log lines delivered cross-thread
 	logMu   sync.Mutex
 	logPend []logLine
+
+	// daily log file writing
+	logFile     *os.File
+	logFileMu   sync.Mutex
+	logFileDate string
 }
 
 var app = &appGUI{}
@@ -306,20 +311,55 @@ func (g *appGUI) appendLogColor(line string, color server.LogColor) {
 	}
 
 	cf := charFormatW{
-		cbSize:      uint32(unsafe.Sizeof(charFormatW{})),
 		dwMask:      CFM_COLOR,
 		dwEffects:   0,
 		crTextColor: rgb,
 	}
+	cf.cbSize = uint32(unsafe.Sizeof(cf))
 
 	sendMessage(g.hLog, EM_SETCHARFORMAT, SCF_SELECTION, uintptr(unsafe.Pointer(&cf)))
 	sendMessage(g.hLog, EM_REPLACESEL, 0, strPtr(textToAppend))
 	sendMessage(g.hLog, EM_SCROLLCARET, 0, 0)
+
+	g.writeToLogFile(line)
 }
 
 // appendLog appends a line to the log box in black (safe to call from the UI thread).
 func (g *appGUI) appendLog(line string) {
 	g.appendLogColor(line, server.ColorBlack)
+}
+
+func (g *appGUI) writeToLogFile(text string) {
+	today := time.Now().Format("060102") // YYMMDD
+	g.logFileMu.Lock()
+	defer g.logFileMu.Unlock()
+	if g.logFile == nil || g.logFileDate != today {
+		if g.logFile != nil {
+			g.logFile.Close()
+		}
+		fname := "HTTPServerDB" + today + ".log"
+		f, err := os.OpenFile(fname, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err == nil {
+			g.logFile = f
+			g.logFileDate = today
+		} else {
+			g.logFile = nil
+			g.logFileDate = ""
+		}
+	}
+	if g.logFile != nil {
+		g.logFile.WriteString(text + "\r\n")
+	}
+}
+
+func (g *appGUI) closeLogFile() {
+	g.logFileMu.Lock()
+	defer g.logFileMu.Unlock()
+	if g.logFile != nil {
+		g.logFile.Close()
+		g.logFile = nil
+		g.logFileDate = ""
+	}
 }
 
 // logFromServer is the callback passed to the server; it queues the line and
@@ -614,6 +654,7 @@ func wndProc(hwnd syscall.Handle, m uint32, wParam, lParam uintptr) uintptr {
 		pDestroyWindow.Call(uintptr(hwnd))
 		return 0
 	case WM_DESTROY:
+		app.closeLogFile()
 		postQuitMessage(0)
 		return 0
 	}
