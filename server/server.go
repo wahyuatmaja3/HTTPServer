@@ -65,6 +65,10 @@ type Server struct {
 	onProses    int64
 	maxOnProses int64
 	maxTime     time.Duration
+
+	currentSecond         int64
+	currentSecondRequests int64
+	peakRequestsPerSecond int64
 }
 
 // NewServer creates a new server instance
@@ -87,7 +91,7 @@ func (s *Server) Metrics() Metrics {
 	defer s.metricsMu.Unlock()
 	return Metrics{
 		TotalReq:    s.totalReq,
-		OnProses:    s.onProses,
+		OnProses:    s.peakRequestsPerSecond,
 		MaxOnProses: s.maxOnProses,
 		MaxTime:     s.maxTime,
 	}
@@ -177,6 +181,21 @@ func (s *Server) Start() error {
 		s.onProses++
 		if s.onProses > s.maxOnProses {
 			s.maxOnProses = s.onProses
+		}
+
+		// Track peak requests per second
+		nowUnix := time.Now().Unix()
+		if nowUnix == s.currentSecond {
+			s.currentSecondRequests++
+		} else {
+			if s.currentSecondRequests > s.peakRequestsPerSecond {
+				s.peakRequestsPerSecond = s.currentSecondRequests
+			}
+			s.currentSecond = nowUnix
+			s.currentSecondRequests = 1
+		}
+		if s.currentSecondRequests > s.peakRequestsPerSecond {
+			s.peakRequestsPerSecond = s.currentSecondRequests
 		}
 		s.metricsMu.Unlock()
 
