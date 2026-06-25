@@ -44,12 +44,12 @@ var (
 	pInitCommonControlsEx = comctl32.NewProc("InitCommonControlsEx")
 )
 
-// loadRichEdit loads the RichEdit control DLL so the "RICHEDIT50W" /
+// loadRichEdit loads the RichEdit control DLL so the "RichEdit50W" /
 // "RichEdit20W" window classes become available. Returns the class name that
 // successfully registered.
 func loadRichEdit() string {
 	if h, _, _ := pLoadLibraryW.Call(uintptr(unsafe.Pointer(mustUTF16("Msftedit.dll")))); h != 0 {
-		return "RICHEDIT50W"
+		return "RichEdit50W"
 	}
 	if h, _, _ := pLoadLibraryW.Call(uintptr(unsafe.Pointer(mustUTF16("Riched20.dll")))); h != 0 {
 		return "RichEdit20W"
