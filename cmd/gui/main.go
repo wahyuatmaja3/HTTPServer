@@ -453,6 +453,7 @@ func (g *appGUI) startServer() {
 		MaxThreads:     g.editInt(g.hMaxThread, 2000),
 		ListenQueue:    g.editInt(g.hListenQ, 0),
 		TablesDir:      server.GetTablesDir(),
+		DetailLog:      sendMessage(g.hDetailLog, BM_GETCHECK, 0, 0) == BST_CHECKED,
 	}
 
 	// Disable start button while starting to give user feedback

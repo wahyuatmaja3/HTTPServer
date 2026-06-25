@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ type Config struct {
 	MaxThreads     int
 	ListenQueue    int
 	TablesDir      string
+	DetailLog      bool
 }
 
 // LogColor categorizes a log line so a GUI can render it in a matching color.
@@ -205,6 +207,9 @@ func (s *Server) Start() error {
 		}
 		start := time.Now()
 
+		ctx := context.WithValue(r.Context(), "origPath", origPath)
+		r = r.WithContext(ctx)
+
 		r.URL.Path = strings.ToLower(r.URL.Path)
 		mux.ServeHTTP(w, r)
 
@@ -259,6 +264,10 @@ func (s *Server) Stop() error {
 
 func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, ep APIEndpoint) {
 	start := time.Now()
+	origPath, _ := r.Context().Value("origPath").(string)
+	if origPath == "" {
+		origPath = r.URL.Path
+	}
 
 	// Collect parameters from query string and body only when needed.
 	params := make(map[string]string)
@@ -304,8 +313,38 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, ep APIEn
 		s.log("  Static SQL field is not valid JSON, falling through to query execution")
 	}
 
-	// Execute SQL query
-	result, err := ExecuteQuery(s.config.TablesDir, ep.SQL, params)
+	var result *QueryResult
+	var err error
+
+	if s.config.DetailLog {
+		// 1. Log Query1.SQL.Text
+		s.logColor(fmt.Sprintf("%s Query1.SQL.Text", origPath), ColorBlack)
+
+		// 2. Extract and log parameters
+		placeholderRegex := regexp.MustCompile(`:[a-zA-Z_][a-zA-Z0-9_]*`)
+		matches := placeholderRegex.FindAllString(ep.SQL, -1)
+		for i := range matches {
+			s.logColor(fmt.Sprintf("%s Param%d", origPath, i), ColorBlack)
+		}
+
+		// 3. Log Query1.Open if it's a SELECT query
+		upperSQL := strings.ToUpper(strings.TrimSpace(ep.SQL))
+		isSelect := strings.HasPrefix(upperSQL, "SELECT")
+		if isSelect {
+			s.logColor(fmt.Sprintf("%s Query1.Open", origPath), ColorBlack)
+		}
+
+		// Execute SQL query
+		result, err = ExecuteQuery(s.config.TablesDir, ep.SQL, params)
+
+		// 4. Log Result <count> if it's a SELECT query and there was no error
+		if isSelect && err == nil {
+			s.logColor(fmt.Sprintf("%sResult %d", origPath, len(result.Records)), ColorBlack)
+		}
+	} else {
+		// Execute SQL query normally without detail logs
+		result, err = ExecuteQuery(s.config.TablesDir, ep.SQL, params)
+	}
 	queryDone := time.Now()
 	if err != nil {
 		s.log(fmt.Sprintf("  Error: %v", err))
