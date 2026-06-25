@@ -197,10 +197,7 @@ func (g *appGUI) buildControls() {
 
 	// Populate ListView
 	for i, ip := range g.config.IPs {
-		stateVal := uint32(0x1000) // Unchecked (1 << 12)
-		if i < 3 {
-			stateVal = 0x2000 // Checked (2 << 12)
-		}
+		stateVal := uint32(0x2000) // Checked (2 << 12) by default for all IPs
 		item := lvItemW{
 			mask:      LVIF_TEXT | LVIF_STATE,
 			iItem:     int32(i),
