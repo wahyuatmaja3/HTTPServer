@@ -646,6 +646,15 @@ func wndProc(hwnd syscall.Handle, m uint32, wParam, lParam uintptr) uintptr {
 		case idStartBtn:
 			app.toggleServer()
 			return 0
+		case idDetailLog:
+			app.mu.Lock()
+			srv := app.srv
+			app.mu.Unlock()
+			if srv != nil {
+				checked := sendMessage(app.hDetailLog, BM_GETCHECK, 0, 0) == BST_CHECKED
+				srv.SetDetailLog(checked)
+			}
+			return 0
 		}
 	case WM_CLOSE:
 		if app.running {

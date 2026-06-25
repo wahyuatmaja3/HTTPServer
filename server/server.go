@@ -87,6 +87,20 @@ func (s *Server) SetColorLog(fn func(string, LogColor)) {
 	s.colorLogFunc = fn
 }
 
+// SetDetailLog dynamically enables or disables detailed logging
+func (s *Server) SetDetailLog(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.DetailLog = enabled
+}
+
+// IsDetailLogEnabled returns whether detailed logging is enabled
+func (s *Server) IsDetailLogEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.config.DetailLog
+}
+
 // Metrics returns a snapshot of the live request counters.
 func (s *Server) Metrics() Metrics {
 	s.metricsMu.Lock()
@@ -316,7 +330,7 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, ep APIEn
 	var result *QueryResult
 	var err error
 
-	if s.config.DetailLog {
+	if s.IsDetailLogEnabled() {
 		// 1. Log Query1.SQL.Text
 		s.logColor(fmt.Sprintf("%s Query1.SQL.Text", origPath), ColorBlack)
 
