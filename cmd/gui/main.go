@@ -197,16 +197,19 @@ func (g *appGUI) buildControls() {
 
 	// Populate ListView
 	for i, ip := range g.config.IPs {
-		stateVal := uint32(0x2000) // Checked (2 << 12) by default for all IPs
 		item := lvItemW{
-			mask:      LVIF_TEXT | LVIF_STATE,
-			iItem:     int32(i),
-			iSubItem:  0,
-			pszText:   mustUTF16(ip),
-			stateMask: LVIS_STATEIMAGEMASK,
-			state:     stateVal,
+			mask:    LVIF_TEXT,
+			iItem:   int32(i),
+			pszText: mustUTF16(ip),
 		}
 		sendMessage(g.hIPList, LVM_INSERTITEMW, 0, uintptr(unsafe.Pointer(&item)))
+
+		// Set checkbox state to checked (2 << 12)
+		stateItem := lvItemW{
+			state:     0x2000,
+			stateMask: LVIS_STATEIMAGEMASK,
+		}
+		sendMessage(g.hIPList, LVM_SETITEMSTATE, uintptr(i), uintptr(unsafe.Pointer(&stateItem)))
 	}
 
 	g.child("STATIC", "Bind to port", SS_LEFT, 0, ox+112, oy+11, 60, 11, 0)
