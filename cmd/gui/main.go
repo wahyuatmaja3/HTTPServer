@@ -278,7 +278,7 @@ func (g *appGUI) applyFont() {
 
 // seedLog writes the initial three log lines from gui.md §4.
 func (g *appGUI) seedLog() {
-	now := time.Now().Format("01/02/2006 15.04.05")
+	now := time.Now().Format("01/02/2006 15:04:05")
 	g.appendLog(now + " FormCreate")
 	g.appendLog(now + " DB Open")
 	g.appendLog(now + " Version: 9 Maret 2024")
@@ -365,7 +365,7 @@ func (g *appGUI) closeLogFile() {
 // logFromServer is the callback passed to the server; it queues the line and
 // posts a message so the UI thread does the actual control update.
 func (g *appGUI) logFromServer(line string) {
-	stamped := time.Now().Format("01/02/2006 15.04.05") + " " + line
+	stamped := time.Now().Format("01/02/2006 15:04:05") + " " + line
 	g.logMu.Lock()
 	g.logPend = append(g.logPend, logLine{text: stamped, color: server.ColorBlack})
 	g.logMu.Unlock()
@@ -375,7 +375,7 @@ func (g *appGUI) logFromServer(line string) {
 // logColorFromServer is the callback passed to the server; it queues the line and
 // posts a message so the UI thread does the actual control update.
 func (g *appGUI) logColorFromServer(line string, color server.LogColor) {
-	stamped := time.Now().Format("01/02/2006 15.04.05") + " " + line
+	stamped := time.Now().Format("01/02/2006 15:04:05") + " " + line
 	g.logMu.Lock()
 	g.logPend = append(g.logPend, logLine{text: stamped, color: color})
 	g.logMu.Unlock()
@@ -475,7 +475,7 @@ func (g *appGUI) startServer() {
 		} else {
 			g.logMu.Lock()
 			g.logPend = append(g.logPend, logLine{
-				text:  time.Now().Format("01/02/2006 15.04.05") + " Error starting server: " + err.Error(),
+				text:  time.Now().Format("01/02/2006 15:04:05") + " Error starting server: " + err.Error(),
 				color: server.ColorBlack,
 			})
 			g.logMu.Unlock()
@@ -503,7 +503,7 @@ func (g *appGUI) stopServer() {
 	}
 	g.running = false
 	setWindowText(g.hStartBtn, "Start Server")
-	g.appendLog(time.Now().Format("01/02/2006 15.04.05") + " Server stopped")
+	g.appendLog(time.Now().Format("01/02/2006 15:04:05") + " Server stopped")
 
 	enableWindow(g.hIPList, true)
 	enableWindow(g.hPort, true)

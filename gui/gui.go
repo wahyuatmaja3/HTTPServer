@@ -73,7 +73,7 @@ func NewGUI() {
 }
 
 func (g *GUI) seedLog() {
-	now := time.Now().Format("01/02/2006 15.04.05")
+	now := time.Now().Format("01/02/2006 15:04:05")
 	g.appendLog(now + " FormCreate")
 	g.appendLog(now + " DB Open")
 	g.appendLog(now + " Version: 9 Maret 2024")
@@ -252,7 +252,7 @@ func (g *GUI) stopServer() {
 }
 
 func (g *GUI) appendLog(msg string) {
-	timestamp := time.Now().Format("01/02/2006 15.04.05")
+	timestamp := time.Now().Format("01/02/2006 15:04:05")
 	line := timestamp + " " + msg + "\n"
 	current := g.logText.Text
 	g.logText.SetText(current + line)

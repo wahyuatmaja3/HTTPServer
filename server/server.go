@@ -97,14 +97,13 @@ func (s *Server) Metrics() Metrics {
 	}
 }
 
-// FormatDuration renders a duration as mm.ss.mmm (matching the original
-// program's "00.00.100" style used in Finish log lines and the Max Time field).
+// FormatDuration renders a duration as mm:ss:ms (matching the "00:00:140" style used in Finish log lines and the Max Time field).
 func FormatDuration(d time.Duration) string {
 	totalMs := d.Milliseconds()
 	ms := totalMs % 1000
 	sec := (totalMs / 1000) % 60
 	minu := totalMs / 60000
-	return fmt.Sprintf("%02d.%02d.%d", minu, sec, ms)
+	return fmt.Sprintf("%02d:%02d:%d", minu, sec, ms)
 }
 
 func (s *Server) logColor(msg string, c LogColor) {
@@ -199,7 +198,11 @@ func (s *Server) Start() error {
 		}
 		s.metricsMu.Unlock()
 
-		s.logColor(fmt.Sprintf("%07d Req %s,", n, origPath), ColorBlue)
+		if r.URL.RawQuery != "" {
+			s.logColor(fmt.Sprintf("%07d Req %s, %s", n, origPath, r.URL.RawQuery), ColorBlue)
+		} else {
+			s.logColor(fmt.Sprintf("%07d Req %s,", n, origPath), ColorBlue)
+		}
 		start := time.Now()
 
 		r.URL.Path = strings.ToLower(r.URL.Path)
