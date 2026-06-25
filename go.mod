@@ -1,6 +1,6 @@
 module httpserverdb
 
-go 1.25
+go 1.20
 
 require fyne.io/fyne/v2 v2.6.3
 

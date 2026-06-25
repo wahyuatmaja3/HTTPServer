@@ -193,7 +193,7 @@ func parseDate(raw []byte) interface{} {
 	}
 	// v = number of days since Jan 1, year 1 (0001-01-01)
 	d := paradoxEpoch.AddDate(0, 0, int(v)-1)
-	return d.Format("2006-01-02")
+	return d.Format("02/01/2006")
 }
 
 func parseShort(raw []byte) interface{} {
@@ -272,7 +272,7 @@ func parseTimestamp(raw []byte) interface{} {
 
 	t := paradoxEpoch.AddDate(0, 0, int(days)-1)
 	t = t.Add(time.Duration(remainder) * time.Millisecond)
-	return t.Format("2006-01-02 15:04:05")
+	return t.Format("02/01/2006 15:04:05")
 }
 
 func flipHighBit32(raw []byte) uint32 {
